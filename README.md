@@ -1,5 +1,5 @@
-[互動音高辨識器.html](https://github.com/user-attachments/files/30029931/default.html)
-# pitchdetection<!DOCTYPE html>
+
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
