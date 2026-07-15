@@ -1,1 +1,266 @@
-# pitchdetection
+[互動音高辨識器.html](https://github.com/user-attachments/files/30029931/default.html)
+# pitchdetection<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>互動音高辨識器</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .card {
+      background: white;
+      padding: 30px;
+      border-radius: 20px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+      text-align: center;
+      width: 100%;
+      max-width: 400px;
+    }
+    h2 {
+      margin-top: 0;
+      color: #2b6cb0;
+    }
+    .btn {
+      background: #3182ce;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 50px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.2s;
+      box-shadow: 0 4px 6px rgba(49, 130, 206, 0.2);
+    }
+    .btn:hover {
+      background: #2b6cb0;
+    }
+    .note-display {
+      font-size: 72px;
+      font-weight: 800;
+      color: #2d3748;
+      margin: 20px 0 10px 0;
+      height: 90px;
+      line-height: 90px;
+    }
+    .freq-display {
+      font-size: 18px;
+      color: #718096;
+      margin-bottom: 20px;
+      height: 24px;
+    }
+    /* 簡易調音表指針 */
+    .gauge-container {
+      width: 100%;
+      height: 10px;
+      background: #e2e8f0;
+      border-radius: 5px;
+      position: relative;
+      margin-top: 20px;
+      overflow: hidden;
+    }
+    .gauge-pointer {
+      width: 6px;
+      height: 100%;
+      background: #3182ce;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      transition: left 0.1s ease-out;
+      border-radius: 3px;
+    }
+    .gauge-center {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: 2px;
+      height: 100%;
+      background: #cbd5e0;
+    }
+    .status {
+      font-size: 14px;
+      color: #a0aec0;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>互動音高辨識器</h2>
+  <button class="btn" id="startBtn">啟動麥克風</button>
+  <div class="note-display" id="note">-</div>
+  <div class="freq-display" id="freq">-- Hz</div>
+  
+  <div class="gauge-container">
+    <div class="gauge-center"></div>
+    <div class="gauge-pointer" id="pointer"></div>
+  </div>
+  <div class="status" id="status">點擊按鈕開始偵測</div>
+</div>
+
+<script>
+let audioCtx;
+let analyser;
+let micStream;
+let isPlaying = false;
+const buflen = 2048;
+const buf = new Float32Array(buflen);
+
+const noteStrings = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+const startBtn = document.getElementById('startBtn');
+const noteDisplay = document.getElementById('note');
+const freqDisplay = document.getElementById('freq');
+const pointer = document.getElementById('pointer');
+const statusDisplay = document.getElementById('status');
+
+startBtn.addEventListener('click', toggleAudio);
+
+async function toggleAudio() {
+  if (isPlaying) {
+    // 停止
+    if (micStream) {
+      micStream.getTracks().forEach(track => track.stop());
+    }
+    if (audioCtx) {
+      await audioCtx.close();
+    }
+    isPlaying = false;
+    startBtn.textContent = "啟動麥克風";
+    noteDisplay.textContent = "-";
+    freqDisplay.textContent = "-- Hz";
+    pointer.style.left = "50%";
+    statusDisplay.textContent = "已停止偵測";
+    return;
+  }
+
+  // 啟動
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioContext();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = buflen;
+
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const source = audioCtx.createMediaStreamSource(micStream);
+    source.connect(analyser);
+
+    isPlaying = true;
+    startBtn.textContent = "停止偵測";
+    statusDisplay.textContent = "正在聆聽...";
+    updatePitch();
+  } catch (err) {
+    alert("無法取得麥克風權限！請確保您的瀏覽器允許此網頁存取麥克風，且網址為 https:// 開頭。");
+    console.error(err);
+  }
+}
+
+// 自相關演算法 (Autocorrelation) 尋找基頻
+function autoCorrelate(buf, sampleRate) {
+  let SIZE = buf.length;
+  let r1 = 0, r2 = SIZE - 1;
+  let thres = 0.2;
+
+  // 剪除無聲部分
+  let rms = 0;
+  for (let i = 0; i < SIZE; i++) {
+    let val = buf[i];
+    rms += val * val;
+  }
+  rms = Math.sqrt(rms / SIZE);
+  if (rms < 0.01) return -1; // 聲音太小
+
+  // 訊號邊緣裁剪
+  for (let i = 0; i < SIZE / 2; i++) {
+    if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+  }
+  for (let i = SIZE - 1; i >= SIZE / 2; i--) {
+    if (Math.abs(buf[i]) < thres) { r2 = i; break; }
+  }
+  buf = buf.slice(r1, r2);
+  SIZE = buf.length;
+
+  let c = new Float32Array(SIZE);
+  for (let i = 0; i < SIZE; i++) {
+    for (let j = 0; j < SIZE - i; j++) {
+      c[i] = c[i] + buf[j] * buf[j + i];
+    }
+  }
+
+  let d = 0;
+  while (c[d] > c[d + 1]) d++;
+  let maxval = -1, maxpos = -1;
+  for (let i = d; i < SIZE; i++) {
+    if (c[i] > maxval) {
+      maxval = c[i];
+      maxpos = i;
+    }
+  }
+  let T0 = maxpos;
+
+  let x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+  let a = (x1 + x3 - 2 * x2) / 2;
+  let b = (x3 - x1) / 2;
+  if (a) T0 = T0 - b / (2 * a);
+
+  return sampleRate / T0;
+}
+
+function noteFromPitch(frequency) {
+  const noteNum = 12 * (Math.log(frequency / 440) / Math.log(2));
+  return Math.round(noteNum) + 69;
+}
+
+function centsOffFromPitch(frequency, note) {
+  return Math.floor(1200 * Math.log(frequency / (440 * Math.pow(2, (note - 69) / 12))) / Math.log(2));
+}
+
+function updatePitch() {
+  if (!isPlaying) return;
+
+  analyser.getFloatTimeDomainData(buf);
+  const ac = autoCorrelate(buf, audioCtx.sampleRate);
+
+  if (ac !== -1 && ac > 50 && ac < 1000) { // 限制人聲與一般樂器常用範圍 (50Hz - 1000Hz)
+    const pitch = ac;
+    const note = noteFromPitch(pitch);
+    const detune = centsOffFromPitch(pitch, note);
+
+    noteDisplay.textContent = noteStrings[note % 12];
+    freqDisplay.textContent = Math.round(pitch) + " Hz";
+
+    // 更新調音指針 (偏低 left 降到 10%，偏高 left 升到 90%，準確則在 50%)
+    let pointerPercent = 50 + (detune * 0.8); // 1 cent 對應 0.8% 的位移
+    pointerPercent = Math.max(10, Math.min(90, pointerPercent));
+    pointer.style.left = pointerPercent + "%";
+    
+    if (Math.abs(detune) < 10) {
+      pointer.style.backgroundColor = "#48bb78"; // 音準正確顯示綠色
+    } else {
+      pointer.style.backgroundColor = "#3182ce"; // 偏離顯示藍色
+    }
+  } else {
+    // 沒有偵測到有效聲音時，緩慢回歸中心
+    pointer.style.left = "50%";
+    pointer.style.backgroundColor = "#3182ce";
+  }
+
+  requestAnimationFrame(updatePitch);
+}
+</script>
+
+</body>
+</html>
